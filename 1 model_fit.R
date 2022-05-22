@@ -17,6 +17,9 @@ library(hhh4contacts)
 library(hhh4addon)
 library(gridExtra)
 
+library(data.table)
+library(ggplot2)
+
 memory.size() ### Checking your memory size
 memory.limit() ## Checking the set limit
 memory.limit(size=56000) ### expanding your memory
@@ -28,8 +31,9 @@ contactVN_origin <- readRDS("contactVN.rds")    #source: http://www.socialcontac
 pop <- readRDS("populationVN.rds")              #population in VN in 2005, 2009 & 2019
 
 #Population 2005 retrieved from SOCRATES data (http://www.socialcontactdata.org/socrates/)
-#POpulation 2019 retrieved from census data 2019 
+#POpulation 2009, 2019 retrieved from census data 2009, 2019 
 #(http://tongdieutradanso.vn/12-completed-results-of-the-2019-census.html)
+#(https://www.gso.gov.vn/du-lieu-va-so-lieu-thong-ke/2019/03/ket-qua-toan-bo-tong-dieu-tra-dan-so-va-nha-o-viet-nam-nam-2009/)
 
 #==================================================================
 # DATA & MODEL SET UP
@@ -70,6 +74,7 @@ mat_neighbourhood <- neighbourhood(measles_sts) #diagonal different than 0 (i.e.
 ## Define Lunar New Year (2019 & 2020)
 newyear <- list(t = epoch(measles_sts) - 1,
                 lunar = 1*(epoch(measles_sts) %in% c(398:406,753:759)))
+str(newyear)
 
 ## Define model matrix by age group indicators
 mat_group <- sapply(groups, function (group) {
@@ -77,6 +82,7 @@ mat_group <- sapply(groups, function (group) {
   col <- col(measles_sts)
   col[] <- col %in% list
   col}, simplify = FALSE, USE.NAMES = TRUE)
+str(mat_group)
 
 ## Define model matrix by province indicators
 mat_province <- sapply(provinces, function (province) {
@@ -84,13 +90,42 @@ mat_province <- sapply(provinces, function (province) {
   col <- col(measles_sts)
   col[] <- col %in% list
   col}, simplify = FALSE, USE.NAMES = TRUE)
+str(mat_province)
+
+
+#7 provinces
+aa <- mat_province
+mat_province1 <- matrix(mapply(sum, aa$`Lam Dong`,aa$`Ho Chi Minh City`,
+                               aa$`Binh Phuoc`,aa$`Ba Ria Vung Tau`,
+                               aa$`Binh Duong`, aa$`Tay Ninh`, aa$`Dong Nai`,
+                               MoreArgs=list(na.rm=T)),ncol=80)  ## provinces in South East area
+#13 provinces
+mat_province2 <- matrix(mapply(sum, aa$`Long An`, aa$`Dong Thap`, aa$`An Giang`,aa$`Tien Giang`,
+                               aa$`Vinh Long`, aa$`Ben Tre`, aa$`Kien Giang`, aa$`Can Tho City`,
+                               aa$`Hau Giang`, aa$`Tra Vinh`, aa$`Soc Trang`, aa$`Bac Lieu`,
+                               aa$`Ca Mau`,
+                               MoreArgs=list(na.rm=T)),ncol=80) ## provinces in Mekong River Delta area
+mat_provinceG <- list(SouthEast = mat_province1, Mekong=mat_province2)
+str(mat_provinceG)
+
+## Define model matrix by overal sine-cosine effects 
+mat_season <- with(c(newyear), unlist(lapply(
+  X = 1,
+  FUN = function (x) {
+    list_indicator <- list(x * sin(2 * pi * t/365),
+                           x * cos(2 * pi * t/365))
+    names(list_indicator) <- paste0(c("sin", "cos"), "(2*pi*t/365)")
+    list_indicator}), recursive = FALSE, use.names = TRUE))
+str(mat_season)
 
 ## Define groups & province name
 nameG <- paste0("`", groups, "`")
-nameP = paste0("`", provinces, "`")
+nameP <- paste0("`", provinces, "`")
+namePG <- paste0("`", names(mat_provinceG), "`")
+nameS <- paste0("`", names(mat_season), "`")
 
 ## Define Offset
-offset_pop <- population(measles_sts) / 100000
+offset_pop <- population(measles_sts)
 
 
 #==================================================================
@@ -98,18 +133,18 @@ offset_pop <- population(measles_sts) / 100000
 # MODEL FIT
 #==================================================================
 ## Endemic model
-f_end <- reformulate(c(1, nameG[-1], "lunar"),
+f_end <- reformulate(c(1, nameG[-1], namePG[-1], "t","lunar", nameS),
                      intercept = TRUE) 
 
 control<- list(
   end = list(f = f_end,
              offset = offset_pop),
   family = factor(stratum(measles_sts, which = 2)), # group-specific dispersion
-  data = c(mat_group, mat_province, newyear))      
-
+  data = c(mat_group, mat_province, newyear, mat_season, mat_provinceG))     
+ 
 fit_endemic <- hhh4(measles_sts, control = control)
 summary(fit_endemic)
-save(fit_endemic, file="model_fit_final/fit_endemic.rda")
+save(fit_endemic, file="model_fit/fit_endemic.rda")
 
 
 ## Epidemic model (2 components)
@@ -128,47 +163,46 @@ fit_PL <- update(fit_endemic,
                              newyear,mat_group, mat_province)) 
 
 summary(fit_PL)
-save(fit_PL, file="model_fit_final/fit_PL.rda")
+save(fit_PL, file="model_fit/fit_PL.rda")
 
 
 ### Fit group-specific powerlaw
+fit_PL <- get(load("model_fit/fit_PL.rda"))
 weights <- addGroups2WFUN(WFUN = fit_PL$control$ne$weights,
                           groups = factor(stratum(measles_sts, which = 2)))
 fit_PLG <- update(fit_PL, ne = list(weights = weights))
 summary(fit_PLG)
-save(fit_PLG, file="model_fit_final/fit_PLG.rda")
+save(fit_PLG, file="model_fit/fit_PLG.rda")
 
 ### Fit model with no mixing between groups
 fit_nomixing <- update(fit_PL,
                        ne = list(scale = expandC(contactVN_diag, nprovinces)),
                        use.estimates = FALSE)
 summary(fit_nomixing)
-save(fit_nomixing, file="model_fit_final/fit_nomixing.rda")
+save(fit_nomixing, file="model_fit/fit_nomixing.rda")
 
 ### Fit model with homogeneous mixing
 fit_homo <- update(fit_PL,ne = list(scale = NULL),
                    use.estimates = FALSE)
 summary(fit_homo)
-save(fit_homo, file="model_fit_final/fit_homo.rda")
+save(fit_homo, file="model_fit/fit_homo.rda")
 
 
 ### Fit power
 fit_PLpower <- fitC(fit_PL, contactVN, 
                     normalize = TRUE, truncate = TRUE)
 summary(fit_PLpower)
-save(fit_PLpower, file="model_fit_final/fit_PLpower.rda")
+save(fit_PLpower, file="model_fit/fit_PLpower.rda")
 
 fit_PLGpower <- fitC(fit_PLG, contactVN, 
                     normalize = TRUE, truncate = TRUE)
 summary(fit_PLGpower)
-save(fit_PLGpower, file="model_fit_final/fit_PLGpower.rda")
+save(fit_PLGpower, file="model_fit/fit_PLGpower.rda")
 
 
-## => final model selection:
-## Endemic: 1 + group + lunar + offset (pop/100000)
+## => final model selection
+## Endemic: 1 + group + mekong + trend t + lunar + sincos + offset (pop)
 ## Epidemic: 1 + group + province + log(pop) + lunar
-
-
 
 #==================================================================
 ##############################
@@ -194,6 +228,7 @@ mat_groupw <- sapply(groups, function (group) {
   col <- col(measles_stsw)
   col[] <- col %in% list
   col}, simplify = FALSE, USE.NAMES = TRUE)
+str(mat_groupw)
 
 ### Define model matrix by province indicators
 mat_provincew <- sapply(provinces, function (province) {
@@ -201,19 +236,44 @@ mat_provincew <- sapply(provinces, function (province) {
   col <- col(measles_stsw)
   col[] <- col %in% list
   col}, simplify = FALSE, USE.NAMES = TRUE)
+str(mat_provincew)
+
+#7 provinces
+aa <- mat_provincew
+mat_province1 <- matrix(mapply(sum, aa$`Lam Dong`,aa$`Ho Chi Minh City`,
+                               aa$`Binh Phuoc`,aa$`Ba Ria Vung Tau`,
+                               aa$`Binh Duong`, aa$`Tay Ninh`, aa$`Dong Nai`,
+                               MoreArgs=list(na.rm=T)),ncol=80)
+#13 provinces
+mat_province2 <- matrix(mapply(sum, aa$`Long An`, aa$`Dong Thap`, aa$`An Giang`,aa$`Tien Giang`,
+                               aa$`Vinh Long`, aa$`Ben Tre`, aa$`Kien Giang`, aa$`Can Tho City`,
+                               aa$`Hau Giang`, aa$`Tra Vinh`, aa$`Soc Trang`, aa$`Bac Lieu`,
+                               aa$`Ca Mau`,
+                               MoreArgs=list(na.rm=T)),ncol=80)
+mat_provinceGw <- list(SouthEast = mat_province1, Mekong=mat_province2)
+str(mat_provinceGw)
+
 
 ## Define model matrix by age-specific sine-cosine effects 
-mat_seasonw <- with(c(mat_groupw, newyearw), unlist(lapply(
-  X = groups,
-  FUN = function (group) {
-    group_indicator <- get(group)
-    list_indicator <- list(group_indicator * sin(2 * pi * t/52),
-                           group_indicator * cos(2 * pi * t/52))
-    names(list_indicator) <- paste0(c("sin", "cos"), "(2 * pi * t/52).", group)
+mat_seasonw <- with(c(newyearw), unlist(lapply(
+  X = 1,
+  FUN = function (x) {
+    #group_indicator <- get(group)
+    list_indicator <- list(x * sin(2 * pi * t/52),
+                           x * cos(2 * pi * t/52))
+    names(list_indicator) <- paste0(c("sin", "cos"), "(2*pi*t/52)")
     list_indicator}), recursive = FALSE, use.names = TRUE))
+str(mat_seasonw)
+
 
 ## Define Offset
 offset_popw <- population(measles_stsw) / 100000 #rowSums(population(measles_sts))
+
+## Define groups & province name
+nameG <- paste0("`", groups, "`")
+nameP = paste0("`", provinces, "`")
+namePGw <- paste0("`", names(mat_provinceGw), "`")
+nameSw = paste0("`", names(mat_seasonw), "`")
 #==================================================================
 
 
@@ -242,5 +302,5 @@ contact_2009norm <- contact_2009 / rowSums(contact_2009) #the row-normalized ver
 
 
 
-## Results of models fitted in sensitivity analysis can be found in folder "model_fit_final"
-## and retrieved by, for example: fit <- get(load("model_fit_final/file name of model.rda"))
+## Results of models fitted in sensitivity analysis can be found in folder "model_fit"
+## and retrieved by, for example: fit <- get(load("model_fit/file name of model.rda"))
