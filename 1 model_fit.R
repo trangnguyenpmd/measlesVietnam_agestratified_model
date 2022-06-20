@@ -305,6 +305,20 @@ contact_2009norm <- contact_2009 / rowSums(contact_2009) #the row-normalized ver
 ## and retrieved by, for example: fit <- get(load("model_fit/file name of model.rda"))
 
 
+#==================================================================
+##############################
+#### EXTRACT COEFFICIENTS #############
+##############################
+
+nterms <- terms(fit)$nGroups + 8
+coefs <- coef(fit)[1:nterms]
+CIs <- confint(fit)[1:nterms, ]
+id_log <-  c(grep("over", names(coefs)), grep("neweights.d", names(coefs)))
+coefs[id_log] <- log(coefs[id_log])
+CIs[id_log, ] <- log(CIs[id_log, ])
+tab <- round(cbind(coefs,fit$se, CIs), 3)
+tab
+# write.csv(as.data.frame(tab),"fit.csv", row.names = TRUE)
 
 
 #==================================================================
