@@ -310,13 +310,18 @@ contact_2009norm <- contact_2009 / rowSums(contact_2009) #the row-normalized ver
 #### EXTRACT COEFFICIENTS #############
 ##############################
 
-nterms <- terms(fit)$nGroups + 8
-coefs <- coef(fit)[1:nterms]
-CIs <- confint(fit)[1:nterms, ]
+fit <- get(load("model_fit/fit_PLG.rda"))
+fit$dim
+summary(fit)
+summary(fit, idx2Exp = TRUE)
+
+nterms <- terms(fit)$nGroups #+ 8
+coefs <- exp(coef(fit)[1:nterms])
+CIs <- exp(confint(fit)[1:nterms, ])
 id_log <-  c(grep("over", names(coefs)), grep("neweights.d", names(coefs)))
 coefs[id_log] <- log(coefs[id_log])
 CIs[id_log, ] <- log(CIs[id_log, ])
-tab <- round(cbind(coefs,fit$se, CIs), 3)
+tab <- round(cbind(coefs, CIs), 3)
 tab
 # write.csv(as.data.frame(tab),"fit.csv", row.names = TRUE)
 
